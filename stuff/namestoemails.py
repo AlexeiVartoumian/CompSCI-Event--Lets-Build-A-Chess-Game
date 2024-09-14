@@ -40,8 +40,18 @@ with open(input_file, 'r') as infile, open(output_file, 'w') as outfile:
     company = ""
     for line in infile:
         if line.startswith("Search term:"):
-            company = line.split(":", 1)[1].strip().split()[0]
+                    #Search term: Atlas Venture  linkedin
+            
+            stripper = line.split(":")[1]
+            #stripper = line[0].strip().split(" ") #[:-1:] #.join("")
+            # print(line)
+            # print("search term")
+            # print(stripper)
+            stripper = "".join( stripper.split(" ") ).strip()
+            stripper = stripper[:len(stripper)-8:]
+            #print("stripped" , stripper)
+            #company = line.split(":", 1)[1].strip().split()[0]
         else:
-            email = generate_email(line,company)
+            email = generate_email(line,stripper)
             outfile.write(email + '\n')
 print(f"Processed file saved as {output_file}")
