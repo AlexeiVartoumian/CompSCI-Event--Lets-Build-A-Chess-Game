@@ -3,7 +3,7 @@ import collections
 import configparser
 from datetime import datetime
 #import grp , pwd need unix system
-from fnmatch import fnmatch
+from fnmatch import fnmatch # support gitignore by matching filenames
 import hashlib
 from math import ceil
 import os
@@ -101,7 +101,7 @@ class GitRepository(object):
         else:
             os.makedirs(repo.worktree)
         
-        assert repo_dir(repo, "brnaches" , mkdir= True)
+        assert repo_dir(repo, "branches" , mkdir= True)
         assert repo_dir(repo, "objects" , mkdir = True)
         assert repo_dir(repo, "refs", "tags", mkdir= True)
         assert repo_dir(repo, "refs", "heads", mkdir = True)
@@ -128,7 +128,7 @@ class GitRepository(object):
     
         return ret
 
-argsp = argsubparsers.add_parser("init" , help ="initialise an ewn empty repositou" )   
+argsp = argsubparsers.add_parser("init" , help ="initialise an new empty repository" )   
 argsp.add_argument("path",
 metavar = "directory",
 nargs = "?",
@@ -208,7 +208,8 @@ class GitObject(object):
                 case b'blob' : c = GitBlob
                 case _ :
                     raise Exception("Unknown type {0} for object{1}".format(fmt.decode("ascii"),sha))
-                
+
+            #call constructor and return obkect 
             return c(raw[y+1:])
     
     def object_write(obj , repo=None):
@@ -548,7 +549,7 @@ def ls_tree(repo , ref , recursive = None , prefix =""):
             case b'10': type = "blob" #regular file
             case b'12': type = "blob" # a symlink whre blob contents is link target
             case b'16' : type = "commit" # a submodule
-            case _: raise Exception("Weird tree lead mode {}".format(item.mode))
+            case _: raise Exception("Weird tree leaf mode {}".format(item.mode))
         
         if not (recursive and type == 'tree'): 
             print("{0} {1} {2}\t{3}".format(
@@ -756,7 +757,7 @@ This function is aware of:
         return candidates
 
 def object_find(repo, name, fmt=None , foolw = True):
-    sha = obkect_resolve(repo , name)
+    sha = object_resolve(repo , name)
 
     if not sha:
         raise Exception("No such reference{0}.".format(name))
@@ -1093,9 +1094,123 @@ def gitignore_read(repo):
     index = index_read(repo)
 
     for entry in index.entries:
-        if etry.name == ".gitignore" or entry.name.endswith("./gitignore"):
+        if entry.name == ".gitignore" or entry.name.endswith("./gitignore"):
             dir_name = os.path.dirname(entry.name)
             contents = object_read(repo, entry.sha)
             lines = contents.blobdata.decode("utf8").splitlines()
             ret.scoped[dir_name] = gitignore_parse(lines)
     return ret
+
+
+def check_ignore1(rules, path):
+    result = None
+    for (pattern , value) in rules:
+        if fnmatch(path , pattern):
+            result = value
+    return result
+
+
+# genreal *.c excluded first but generator.c not as in 
+# the general rule must come before the specific
+def check_ignore_scoped(rules, path):
+    parent = os.path.dirname(path)
+    while True:
+        if parent in rules:
+            result = check_ignore1(rules[parent], path)
+            if result != None:
+                return result
+        if parent  == "":
+            break
+        parent = os.path.dirname(parent)
+    return None
+
+def check_ignore_absolute(ruls, path):
+    parent = os.path.dirname(path)
+    for ruleset in rules:
+        result = check_ignore1(ruleset,path)
+        if result != None:
+            return result
+    return False
+
+#binding function on check-ig-absolue and check-igscope
+def check_ignore(rules, path):
+    if os.path.isabs(path):
+        raise Exception("This function requires to be relative to the repositories root")
+    
+    result = check_ignore_scoped(rules.scoped,path)
+    if result != None:
+        return None
+    
+    return check_ignore_absolute(rules.absolute, path)
+
+
+argsp = argsubparsers.add_parser("status", help = "show the working tree status")
+
+def cmd_status(_):
+    repo = repo_find()
+    index = index_read(repo)
+
+    cmd_status_branch(repo)
+    cmd_status_head_index(repo , index)
+    print()
+    cmd_status_index_worktree(repo, index)
+
+#8.5.1
+def branch_get_active(repo):
+    with(repo_file(repo, "HEAD"), "r") as f:
+        head = f.read()
+    
+    if head.startswith("ref: refs/heads/")
+        return(head[16:-1])
+    else:
+        return False
+
+
+def cmd_status_branch(repo):
+    branch = branch_get_active(repo)
+    if branch:
+        print("On branch {}.".format(branch))
+    else:
+        print("Head detached at {}".format(object_find(repo , "HEAD")))
+
+#8.5.2 finding changes between head and index
+
+def tree_to_dict(repo , ref , prefix= ""):
+    ret = dict()
+    tree_sha = object_find(repo ,ref , fmt = b'tree')
+    tree = object_read(repo , tree_sha)
+
+    for leaf in tree.items:
+        full_path = os.path.join(prefix , leaf.path)
+        # we read the object to extract its type this is useleslly
+        # expensive could just open it
+        # as a file and read the first few bytes
+        is_subtree = lead.mode.startswith(b'04')
+
+        #depedning on the type we either store the path if its a blob
+        # so a regule file or recurse if its another tree,
+        # so a subdir
+        if is_subtree:
+            ret.update(tree_to_dict(repo, lead.sha,full_path))
+        else:
+            ret[full_path] = leaf.sha
+    
+    return ret
+
+def cmd_status_head_index(repo , index):
+    print("Changes to be committed")
+
+    head = tree_to_dict(repo , "HEAD")
+    for entry in index.entries:
+        if entry.name in head:
+            if head[entry.name] != entry.sha:
+                print("     modified:" , entry.name)
+            del head[entry.name] 
+        else:
+            print("     added:  ", entry.name)
+    
+    # keys stil lin head are giles that haven met in the index and have been deleted
+
+    for entry in head.keys():
+        print("  deleted:    ", entry)
+#8.5.3 finding changes between index and worktree
